@@ -19,6 +19,32 @@ const BLOCKING_FULFILLMENT_ORDER_STATUSES = ["IN_PROGRESS", "CLOSED"];
 const BLOCKING_REQUEST_STATUSES = ["ACCEPTED"];
 
 // ============================================================
+// ORDER TRACKER STAGES (Order Confirmed -> Ready to Ship -> Shipped -> Delivered)
+// ============================================================
+
+const tagList = (envValue, fallback) =>
+  (envValue || fallback)
+    .split(",")
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean);
+
+// Ye tags lage hon to "Shipped" / "Delivered" maana jayega (Render env se badal sakte hain)
+const SHIPPED_TAGS = tagList(process.env.SHIPPED_TAGS, "shipped,dispatched");
+const DELIVERED_TAGS = tagList(process.env.DELIVERED_TAGS, "delivered");
+
+// Courier ne Shopify mein shipment status update kiya ho
+const SHIPPED_DISPLAY_STATUSES = [
+  "CARRIER_PICKED_UP",
+  "PICKED_UP",
+  "IN_TRANSIT",
+  "OUT_FOR_DELIVERY",
+  "ATTEMPTED_DELIVERY",
+  "DELAYED",
+  "NOT_DELIVERED",
+  "DELIVERED",
+];
+
+// ============================================================
 
 const ORDER_QUERY = `#graphql
   query CancelEligibility($id: ID!) {
@@ -32,7 +58,7 @@ const ORDER_QUERY = `#graphql
       displayFulfillmentStatus
       customer { id }
       lineItems(first: 50) { nodes { isGiftCard } }
-      fulfillments(first: 1) { id status }
+      fulfillments(first: 10) { id status displayStatus }
       fulfillmentOrders(first: 20) { nodes { id status requestStatus } }
     }
   }
@@ -77,6 +103,43 @@ const READY_MSG =
 
 const PAID_STATUSES = ["PAID", "PARTIALLY_PAID", "PARTIALLY_REFUNDED"];
 
+const lowerTags = (order) => (order.tags || []).map((t) => t.trim().toLowerCase());
+const successfulFulfillments = (order) => (order.fulfillments || []).filter((f) => f.status === "SUCCESS");
+
+// Order "ready to ship" stage par pahunch gaya hai ya nahi
+function isReadyToShip(order) {
+  const tags = lowerTags(order);
+  if (READY_TO_SHIP_TAGS.some((t) => tags.includes(t))) return true;
+  if (BLOCKING_FULFILLMENT_STATUSES.includes(order.displayFulfillmentStatus)) return true;
+  if (successfulFulfillments(order).length > 0) return true;
+  return (order.fulfillmentOrders?.nodes || []).some(
+    (fo) =>
+      BLOCKING_FULFILLMENT_ORDER_STATUSES.includes(fo.status) ||
+      BLOCKING_REQUEST_STATUSES.includes(fo.requestStatus),
+  );
+}
+
+// Tracker ke liye stage: 1 Confirmed, 2 Ready to Ship, 3 Shipped, 4 Delivered
+function getStage(order) {
+  const tags = lowerTags(order);
+  const fulfillments = successfulFulfillments(order);
+
+  const delivered =
+    DELIVERED_TAGS.some((t) => tags.includes(t)) ||
+    (order.displayFulfillmentStatus === "FULFILLED" &&
+      fulfillments.length > 0 &&
+      fulfillments.every((f) => f.displayStatus === "DELIVERED"));
+  if (delivered) return 4;
+
+  const shipped =
+    SHIPPED_TAGS.some((t) => tags.includes(t)) ||
+    fulfillments.some((f) => SHIPPED_DISPLAY_STATUSES.includes(f.displayStatus));
+  if (shipped) return 3;
+
+  if (isReadyToShip(order)) return 2;
+  return 1;
+}
+
 // Order dekh kar decide karo: cancel ho sakta hai ya nahi
 function checkOrder(order, customerId) {
   // Order isi logged-in customer ka hona chahiye
@@ -95,24 +158,8 @@ function checkOrder(order, customerId) {
     return { cancellable: false, state: "NOT_ALLOWED", message: "Gift card orders can't be cancelled." };
   }
 
-  const readyToShip = { cancellable: false, state: "READY_TO_SHIP", message: READY_MSG };
-
-  const tags = (order.tags || []).map((t) => t.trim().toLowerCase());
-  if (READY_TO_SHIP_TAGS.some((t) => tags.includes(t))) return readyToShip;
-
-  if (BLOCKING_FULFILLMENT_STATUSES.includes(order.displayFulfillmentStatus)) return readyToShip;
-
-  if ((order.fulfillments || []).some((f) => f.status === "SUCCESS")) return readyToShip;
-
-  const fulfillmentOrders = order.fulfillmentOrders?.nodes || [];
-  if (
-    fulfillmentOrders.some(
-      (fo) =>
-        BLOCKING_FULFILLMENT_ORDER_STATUSES.includes(fo.status) ||
-        BLOCKING_REQUEST_STATUSES.includes(fo.requestStatus),
-    )
-  ) {
-    return readyToShip;
+  if (isReadyToShip(order)) {
+    return { cancellable: false, state: "READY_TO_SHIP", message: READY_MSG };
   }
 
   return { cancellable: true, state: "OPEN", message: "" };
@@ -135,14 +182,19 @@ async function loadOrder(sessionToken, orderId) {
   return { admin, order, result: checkOrder(order, sessionToken.sub) };
 }
 
-// GET /api/order-cancel?orderId=...  -> button enable/disable ke liye status
+// GET /api/order-cancel?orderId=...  -> button enable/disable + tracker stage
 export const loader = async ({ request }) => {
   const { sessionToken, cors } = await authenticate.public.customerAccount(request);
   const orderId = new URL(request.url).searchParams.get("orderId");
 
   try {
-    const { result } = await loadOrder(sessionToken, orderId);
-    return cors(Response.json(result));
+    const { order, result } = await loadOrder(sessionToken, orderId);
+
+    // Tracker stage sirf usi customer ko dikhe jiska order hai
+    const ownsOrder = Boolean(order && sessionToken.sub && order.customer?.id === sessionToken.sub);
+    const stage = ownsOrder && !order.cancelledAt ? getStage(order) : 0;
+
+    return cors(Response.json({ ...result, stage }));
   } catch (error) {
     console.error("[order-cancel] status error", error);
     return cors(

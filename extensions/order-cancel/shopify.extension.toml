@@ -23,6 +23,10 @@ target = "customer-account.order.action.menu-item.render"
 target = "customer-account.order.action.render"
 module = "./src/CancelModal.jsx"
 
+[[extensions.targeting]]
+target = "customer-account.order-status.block.render"
+module = "./src/OrderTracker.jsx"
+
 [extensions.capabilities]
 # Gives your extension access to directly query Shopify’s storefront API.
 # https://shopify.dev/docs/apps/build/customer-accounts/capabilities#storefront-api-access
