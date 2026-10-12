@@ -1,7 +1,7 @@
 import "@shopify/ui-extensions/preact";
 import { render } from "preact";
 
-const APP_URL = "https://apply-lyrics-delivery-inspection.trycloudflare.com";
+const APP_URL = "https://order-cancel-bvkc.onrender.com";
 
 export default async () => {
   let data = { cancellable: false, state: "UNKNOWN" };

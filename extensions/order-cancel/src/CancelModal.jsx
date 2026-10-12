@@ -3,7 +3,7 @@ import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
 
 // Wahi URL jo CancelMenuItem.jsx mein daala hai
-const APP_URL = "https://apply-lyrics-delivery-inspection.trycloudflare.com";
+const APP_URL = "https://order-cancel-bvkc.onrender.com";
 
 const REASONS = [
   "Ordered by mistake",
