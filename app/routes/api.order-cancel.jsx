@@ -5,7 +5,7 @@ import { authenticate, unauthenticated } from "../shopify.server";
 // Inme se koi bhi ek match hua to cancel band.
 // ============================================================
 
-// 1) Order par ye tag laga ho (Shiprocket / Unicommerce / OMS wala tag add karein)
+// 1) Order par ye tag laga ho (Render -> Environment -> READY_TO_SHIP_TAGS se aata hai)
 const READY_TO_SHIP_TAGS = (process.env.READY_TO_SHIP_TAGS || "ready-to-ship,ready to ship,ready_to_ship,rts")
   .split(",")
   .map((t) => t.trim().toLowerCase())
@@ -31,6 +31,7 @@ const ORDER_QUERY = `#graphql
       displayFinancialStatus
       displayFulfillmentStatus
       customer { id }
+      lineItems(first: 50) { nodes { isGiftCard } }
       fulfillments(first: 1) { id status }
       fulfillmentOrders(first: 20) { nodes { id status requestStatus } }
     }
@@ -53,6 +54,24 @@ const CANCEL_MUTATION = `#graphql
   }
 `;
 
+const TAGS_ADD_MUTATION = `#graphql
+  mutation AddCancelTags($id: ID!, $tags: [String!]!) {
+    tagsAdd(id: $id, tags: $tags) {
+      node { id }
+      userErrors { field message }
+    }
+  }
+`;
+
+const TAGS_REMOVE_MUTATION = `#graphql
+  mutation RemoveCancelTags($id: ID!, $tags: [String!]!) {
+    tagsRemove(id: $id, tags: $tags) {
+      node { id }
+      userErrors { field message }
+    }
+  }
+`;
+
 const READY_MSG =
   "Your order is ready to ship, so it can no longer be cancelled. You can request a return once it's delivered.";
 
@@ -71,10 +90,15 @@ function checkOrder(order, customerId) {
     return { cancellable: false, state: "NOT_ALLOWED", message: "This order can no longer be cancelled." };
   }
 
+  // Gift card wale orders cancel nahi honge
+  if ((order.lineItems?.nodes || []).some((li) => li.isGiftCard)) {
+    return { cancellable: false, state: "NOT_ALLOWED", message: "Gift card orders can't be cancelled." };
+  }
+
   const readyToShip = { cancellable: false, state: "READY_TO_SHIP", message: READY_MSG };
 
   const tags = (order.tags || []).map((t) => t.trim().toLowerCase());
-  if (READY_TO_SHIP_TAGS.some((t) => tags.includes(t.toLowerCase()))) return readyToShip;
+  if (READY_TO_SHIP_TAGS.some((t) => tags.includes(t))) return readyToShip;
 
   if (BLOCKING_FULFILLMENT_STATUSES.includes(order.displayFulfillmentStatus)) return readyToShip;
 
@@ -117,12 +141,7 @@ export const loader = async ({ request }) => {
   const orderId = new URL(request.url).searchParams.get("orderId");
 
   try {
-    
-
-    const { order, result } = await loadOrder(sessionToken, orderId);
-
-    
-
+    const { result } = await loadOrder(sessionToken, orderId);
     return cors(Response.json(result));
   } catch (error) {
     console.error("[order-cancel] status error", error);
@@ -154,9 +173,22 @@ export const action = async ({ request }) => {
       return cors(Response.json(result, { status }));
     }
 
+    // 1) Cancel se pehle reason ka tag lagao (Unicommerce / admin ke liye)
+    const reasonText = String(body.reason || "Not given").replace(/,/g, " ").trim();
+    const cancelTags = ["customer-cancelled", `Cancel: ${reasonText}`.slice(0, 40)];
+
+    const tagRes = await admin.graphql(TAGS_ADD_MUTATION, {
+      variables: { id: body.orderId, tags: cancelTags },
+    });
+    const tagJson = await tagRes.json();
+    if (tagJson.data?.tagsAdd?.userErrors?.length) {
+      console.error("[order-cancel] tag add failed", order.name, tagJson.data.tagsAdd.userErrors);
+    }
+
+    // 2) Order cancel karo
     const variables = {
       orderId: body.orderId,
-      staffNote: `Cancelled by customer from account page. Reason: ${String(body.reason || "Not given").slice(0, 180)}`,
+      staffNote: `Cancelled by customer from account page. Reason: ${reasonText.slice(0, 180)}`,
     };
 
     // Paid order ho to refund original payment method mein (COD mein nahi)
@@ -170,6 +202,16 @@ export const action = async ({ request }) => {
 
     if (errors?.length || userErrors.length) {
       console.error("[order-cancel] cancel failed", order.name, errors, userErrors);
+
+      // Cancel nahi hua -> lagaye hue tags wapas hatao
+      try {
+        await admin.graphql(TAGS_REMOVE_MUTATION, {
+          variables: { id: body.orderId, tags: cancelTags },
+        });
+      } catch (removeError) {
+        console.error("[order-cancel] tag remove failed", order.name, removeError);
+      }
+
       return cors(
         Response.json(
           { state: "ERROR", message: "We couldn't cancel this order. Please contact customer support." },
@@ -177,6 +219,8 @@ export const action = async ({ request }) => {
         ),
       );
     }
+
+    console.info("[order-cancel] cancelled", order.name, "reason:", reasonText);
 
     return cors(
       Response.json({
