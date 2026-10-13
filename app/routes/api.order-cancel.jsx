@@ -175,8 +175,10 @@ function getStage(order) {
       fulfillments.every((f) => f.displayStatus === "DELIVERED"));
   if (delivered) return 4;
 
+   // Fulfillment ban gaya (tracking number ke saath fulfilled) = Shipped
   const shipped =
     SHIPPED_TAGS.some((t) => tags.includes(t)) ||
+    fulfillments.length > 0 ||
     fulfillments.some((f) => SHIPPED_DISPLAY_STATUSES.includes(f.displayStatus));
   if (shipped) return 3;
 
