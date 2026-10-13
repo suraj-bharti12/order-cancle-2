@@ -39,7 +39,7 @@ async function callServer(method, body) {
   return data;
 }
 
-// Cancel ke baad orders page POORA reload karo, taaki "Canceled" status turant dikhe.
+// "Done" dabane par orders page POORA reload karo, taaki "Canceled" status turant dikhe.
 // Poora URL (https://...) dene se browser page dobara load karta hai.
 function reloadOrderPage(ordersUrl) {
   try {
@@ -68,6 +68,8 @@ function CancelModal() {
   const [step, setStep] = useState("checking");
   const [reason, setReason] = useState(REASONS[0]);
   const [message, setMessage] = useState("");
+  const [details, setDetails] = useState(""); // "Other" chunne par customer ka likha reason
+  const [detailsError, setDetailsError] = useState("");
   const [ordersUrl, setOrdersUrl] = useState(null);
 
   // Popup khulte hi dobara check (beech mein ready to ship ho gaya ho to)
@@ -87,17 +89,22 @@ function CancelModal() {
       });
   }, []);
 
-  // Cancel hote hi 2 second success message dikhao, phir page refresh
-  useEffect(() => {
-    if (step !== "done") return;
-    const timer = setTimeout(() => reloadOrderPage(ordersUrl), 2000);
-    return () => clearTimeout(timer);
-  }, [step, ordersUrl]);
+  const isOther = reason === "Other";
 
   async function onConfirm() {
+    // "Other" chuna hai to reason likhna zaroori
+    if (isOther && !details.trim()) {
+      setDetailsError("Please tell us why you want to cancel.");
+      return;
+    }
+    setDetailsError("");
     setStep("submitting");
     try {
-      const data = await callServer("POST", { orderId: shopify.orderId, reason });
+      const data = await callServer("POST", {
+        orderId: shopify.orderId,
+        reason,
+        details: isOther ? details.trim() : "",
+      });
       setMessage(data.message || "Your order has been cancelled.");
       setOrdersUrl(data.ordersUrl || null);
       setStep("done");
@@ -128,7 +135,10 @@ function CancelModal() {
             label="Reason for cancellation"
             value={reason}
             disabled={step === "submitting"}
-            onChange={(e) => setReason(e.target.value)}
+            onChange={(e) => {
+              setReason(e.target.value);
+              setDetailsError("");
+            }}
           >
             {REASONS.map((r) => (
               <s-option key={r} value={r}>
@@ -136,12 +146,33 @@ function CancelModal() {
               </s-option>
             ))}
           </s-select>
+
+          {isOther && (
+            <s-text-area
+              label="Please tell us the reason"
+              value={details}
+              rows={3}
+              maxLength={150}
+              error={detailsError || undefined}
+              disabled={step === "submitting"}
+              onInput={(e) => {
+                setDetails(e.target.value);
+                if (detailsError) setDetailsError("");
+              }}
+              onChange={(e) => setDetails(e.target.value)}
+            ></s-text-area>
+          )}
         </s-stack>
       )}
 
       {step === "blocked" && <s-banner tone="warning">{message}</s-banner>}
       {step === "error" && <s-banner tone="critical">{message}</s-banner>}
-      {step === "done" && <s-banner tone="success">{message}</s-banner>}
+      {step === "done" && (
+        <s-stack gap="base">
+          <s-banner tone="success">{message}</s-banner>
+          <s-text color="subdued">Tap "Done" to see the updated order status.</s-text>
+        </s-stack>
+      )}
 
       {showForm && (
         <s-button

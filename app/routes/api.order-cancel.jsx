@@ -250,7 +250,7 @@ export const loader = async ({ request }) => {
   }
 };
 
-// POST /api/order-cancel  body: { orderId, reason }  -> order cancel
+// POST /api/order-cancel  body: { orderId, reason, details }  -> order cancel
 export const action = async ({ request }) => {
   const { sessionToken, cors } = await authenticate.public.customerAccount(request);
 
@@ -271,6 +271,14 @@ export const action = async ({ request }) => {
 
     // 1) Cancel se pehle reason ka tag lagao (Unicommerce / admin ke liye)
     const reasonText = String(body.reason || "Not given").replace(/,/g, " ").trim();
+    // "Other" chunne par customer ka likha reason (tag mein nahi, staff note mein jayega)
+    const details = String(body.details || "").replace(/\s+/g, " ").trim().slice(0, 150);
+
+    if (reasonText === "Other" && !details) {
+      return cors(
+        Response.json({ state: "ERROR", message: "Please tell us why you want to cancel." }, { status: 400 }),
+      );
+    }
     const cancelTags = ["customer-cancelled", `Cancel: ${reasonText}`.slice(0, 40)];
 
     const tagRes = await admin.graphql(TAGS_ADD_MUTATION, {
@@ -284,7 +292,9 @@ export const action = async ({ request }) => {
     // 2) Order cancel karo
     const variables = {
       orderId: body.orderId,
-      staffNote: `Cancelled by customer from account page. Reason: ${reasonText.slice(0, 180)}`,
+      staffNote: `Cancelled by customer from account page. Reason: ${reasonText}${
+        details ? ` - ${details}` : ""
+      }`.slice(0, 255),
     };
 
     // Paid order ho to refund original payment method mein (COD mein nahi)
@@ -319,7 +329,7 @@ export const action = async ({ request }) => {
     // Cancel poora hone tak ruko
     await waitForJob(admin, data?.orderCancel?.job);
 
-    console.info("[order-cancel] cancelled", order.name, "reason:", reasonText);
+    console.info("[order-cancel] cancelled", order.name, "reason:", reasonText, details ? `(${details})` : "");
 
     // Orders page ka URL, taaki extension poora page reload kar sake
     const ordersUrl = await getOrdersUrl(admin);

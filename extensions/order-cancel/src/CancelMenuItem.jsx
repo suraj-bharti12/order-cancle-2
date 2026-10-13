@@ -4,6 +4,7 @@ import { render } from "preact";
 const APP_URL = "https://order-cancel-bvkc.onrender.com";
 
 export default async () => {
+  // Default: status pata na chale to cancel band
   let data = { cancellable: false, state: "UNKNOWN" };
 
   try {
@@ -36,5 +37,6 @@ function CancelButton({ data }) {
     );
   }
 
+  // Click karne par CancelModal khulega
   return <s-button>Cancel order</s-button>;
 }
