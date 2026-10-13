@@ -279,7 +279,9 @@ export const action = async ({ request }) => {
         Response.json({ state: "ERROR", message: "Please tell us why you want to cancel." }, { status: 400 }),
       );
     }
-    const cancelTags = ["customer-cancelled", `Cancel: ${reasonText}`.slice(0, 40)];
+        // "Other" chuna ho to tag mein customer ka likha text, warna dropdown wala reason
+    const tagReason = reasonText === "Other" && details ? details.replace(/,/g, " ") : reasonText;
+    const cancelTags = ["customer-cancelled", `Cancel: ${tagReason}`.slice(0, 40)];
 
     const tagRes = await admin.graphql(TAGS_ADD_MUTATION, {
       variables: { id: body.orderId, tags: cancelTags },
