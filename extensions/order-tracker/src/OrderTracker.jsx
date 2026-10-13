@@ -36,15 +36,15 @@ function OrderTracker() {
     loadStage();
   }, []);
 
-  // Cancelled order, error, ya loading -> tracker nahi dikhega
-  if (stage < 1) return null;
+  // DEBUG: editor mein block dikhne ke liye. Testing ke baad isse `return null;` kar dena.
+    if (stage < 1) return null;
 
   return (
     <s-section heading="Track your order">
       <s-stack gap="base">
-        <s-progress
-          value={stage - 1}
-          max={STEPS.length - 1}
+               <s-progress
+          value={stage}
+          max={STEPS.length}
           accessibilityLabel={`Step ${stage} of ${STEPS.length}: ${STEPS[stage - 1]}`}
         ></s-progress>
 

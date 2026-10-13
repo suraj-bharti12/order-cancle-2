@@ -2,7 +2,7 @@ import "@shopify/ui-extensions/preact";
 import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
 
-// Wahi URL jo CancelMenuItem.jsx mein daala hai
+// Wahi URL jo CancelMenuItem.jsx mein hai
 const APP_URL = "https://order-cancel-bvkc.onrender.com";
 
 const REASONS = [
@@ -39,6 +39,20 @@ async function callServer(method, body) {
   return data;
 }
 
+// Cancel ke baad orders list dobara kholo, taaki "Canceled" status turant dikhe
+function reloadOrderPage() {
+  try {
+    shopify.navigation.navigate("shopify:customer-account/orders");
+  } catch (error) {
+    console.error("[order-cancel] navigate failed", error);
+  }
+  try {
+    shopify.close();
+  } catch {
+    // modal pehle hi band ho gaya
+  }
+}
+
 export default async () => {
   render(<CancelModal />, document.body);
 };
@@ -65,6 +79,13 @@ function CancelModal() {
         setStep("error");
       });
   }, []);
+
+  // Cancel hote hi 2 second success message dikhao, phir page refresh
+  useEffect(() => {
+    if (step !== "done") return;
+    const timer = setTimeout(reloadOrderPage, 2000);
+    return () => clearTimeout(timer);
+  }, [step]);
 
   async function onConfirm() {
     setStep("submitting");
@@ -126,7 +147,7 @@ function CancelModal() {
       )}
 
       {step === "done" ? (
-        <s-button slot="primary-action" onClick={() => shopify.close()}>
+        <s-button slot="primary-action" onClick={reloadOrderPage}>
           Done
         </s-button>
       ) : (

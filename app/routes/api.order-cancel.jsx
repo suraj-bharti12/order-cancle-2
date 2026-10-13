@@ -98,6 +98,29 @@ const TAGS_REMOVE_MUTATION = `#graphql
   }
 `;
 
+const JOB_QUERY = `#graphql
+  query JobStatus($id: ID!) {
+    job(id: $id) { id done }
+  }
+`;
+
+// orderCancel background job hai -> poora hone tak wait karo (max ~8 sec),
+// taaki customer ka page refresh ho to order "Canceled" hi dikhe
+async function waitForJob(admin, job) {
+  if (!job?.id || job.done) return;
+  for (let i = 0; i < 8; i++) {
+    await new Promise((r) => setTimeout(r, 1000));
+    try {
+      const res = await admin.graphql(JOB_QUERY, { variables: { id: job.id } });
+      const { data } = await res.json();
+      if (data?.job?.done) return;
+    } catch (error) {
+      console.error("[order-cancel] job check failed", error);
+      return;
+    }
+  }
+}
+
 const READY_MSG =
   "Your order is ready to ship, so it can no longer be cancelled. You can request a return once it's delivered.";
 
@@ -182,7 +205,7 @@ async function loadOrder(sessionToken, orderId) {
   return { admin, order, result: checkOrder(order, sessionToken.sub) };
 }
 
-// GET /api/order-cancel?orderId=...  -> button enable/disable + tracker stage
+// GET /api/order-cancel?orderId=...  -> button enable/disable ke liye status
 export const loader = async ({ request }) => {
   const { sessionToken, cors } = await authenticate.public.customerAccount(request);
   const orderId = new URL(request.url).searchParams.get("orderId");
@@ -271,6 +294,9 @@ export const action = async ({ request }) => {
         ),
       );
     }
+
+    // Cancel poora hone tak ruko
+    await waitForJob(admin, data?.orderCancel?.job);
 
     console.info("[order-cancel] cancelled", order.name, "reason:", reasonText);
 
