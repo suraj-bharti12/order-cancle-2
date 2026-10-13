@@ -39,12 +39,18 @@ async function callServer(method, body) {
   return data;
 }
 
-// Cancel ke baad orders list dobara kholo, taaki "Canceled" status turant dikhe
-function reloadOrderPage() {
+// Cancel ke baad orders page POORA reload karo, taaki "Canceled" status turant dikhe.
+// Poora URL (https://...) dene se browser page dobara load karta hai.
+function reloadOrderPage(ordersUrl) {
   try {
-    shopify.navigation.navigate("shopify:customer-account/orders");
+    shopify.navigation.navigate(ordersUrl || "shopify:customer-account/orders");
   } catch (error) {
     console.error("[order-cancel] navigate failed", error);
+    try {
+      shopify.navigation.navigate("shopify:customer-account/orders");
+    } catch {
+      // ignore
+    }
   }
   try {
     shopify.close();
@@ -62,6 +68,7 @@ function CancelModal() {
   const [step, setStep] = useState("checking");
   const [reason, setReason] = useState(REASONS[0]);
   const [message, setMessage] = useState("");
+  const [ordersUrl, setOrdersUrl] = useState(null);
 
   // Popup khulte hi dobara check (beech mein ready to ship ho gaya ho to)
   useEffect(() => {
@@ -83,15 +90,16 @@ function CancelModal() {
   // Cancel hote hi 2 second success message dikhao, phir page refresh
   useEffect(() => {
     if (step !== "done") return;
-    const timer = setTimeout(reloadOrderPage, 2000);
+    const timer = setTimeout(() => reloadOrderPage(ordersUrl), 2000);
     return () => clearTimeout(timer);
-  }, [step]);
+  }, [step, ordersUrl]);
 
   async function onConfirm() {
     setStep("submitting");
     try {
       const data = await callServer("POST", { orderId: shopify.orderId, reason });
       setMessage(data.message || "Your order has been cancelled.");
+      setOrdersUrl(data.ordersUrl || null);
       setStep("done");
     } catch (error) {
       setMessage(error.data?.message || "Something went wrong. Please try again.");
@@ -147,7 +155,11 @@ function CancelModal() {
       )}
 
       {step === "done" ? (
-        <s-button slot="primary-action" onClick={reloadOrderPage}>
+        <s-button
+          slot="primary-action"
+          href={ordersUrl || undefined}
+          onClick={() => reloadOrderPage(ordersUrl)}
+        >
           Done
         </s-button>
       ) : (

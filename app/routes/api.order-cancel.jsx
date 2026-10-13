@@ -121,6 +121,27 @@ async function waitForJob(admin, job) {
   }
 }
 
+const ACCOUNT_URL_QUERY = `#graphql
+  query AccountUrl {
+    shop {
+      customerAccountsV2 { url }
+    }
+  }
+`;
+
+// Customer account ke orders page ka poora URL (jaise https://shopify.com/123/account/orders)
+async function getOrdersUrl(admin) {
+  try {
+    const res = await admin.graphql(ACCOUNT_URL_QUERY);
+    const { data } = await res.json();
+    const base = data?.shop?.customerAccountsV2?.url;
+    return base ? `${String(base).replace(/\/$/, "")}/orders` : null;
+  } catch (error) {
+    console.error("[order-cancel] account url failed", error);
+    return null;
+  }
+}
+
 const READY_MSG =
   "Your order is ready to ship, so it can no longer be cancelled. You can request a return once it's delivered.";
 
@@ -300,10 +321,14 @@ export const action = async ({ request }) => {
 
     console.info("[order-cancel] cancelled", order.name, "reason:", reasonText);
 
+    // Orders page ka URL, taaki extension poora page reload kar sake
+    const ordersUrl = await getOrdersUrl(admin);
+
     return cors(
       Response.json({
         state: "CANCELLED",
         message: "Your order has been cancelled. You'll receive a confirmation email shortly.",
+        ordersUrl,
       }),
     );
   } catch (error) {
