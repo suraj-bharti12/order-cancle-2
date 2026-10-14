@@ -57,8 +57,13 @@ const ORDER_QUERY = `#graphql
       displayFinancialStatus
       displayFulfillmentStatus
       customer { id }
-      lineItems(first: 50) { nodes { isGiftCard } }
-      fulfillments(first: 10) { id status displayStatus }
+      lineItems(first: 50) { nodes { id isGiftCard variant { id } } }
+      fulfillments(first: 10) {
+        id
+        status
+        displayStatus
+        fulfillmentLineItems(first: 50) { nodes { lineItem { id } } }
+      }
       fulfillmentOrders(first: 20) { nodes { id status requestStatus } }
     }
   }
@@ -175,7 +180,7 @@ function getStage(order) {
       fulfillments.every((f) => f.displayStatus === "DELIVERED"));
   if (delivered) return 4;
 
-   // Fulfillment ban gaya (tracking number ke saath fulfilled) = Shipped
+  // Fulfillment ban gaya (tracking number ke saath fulfilled) = Shipped
   const shipped =
     SHIPPED_TAGS.some((t) => tags.includes(t)) ||
     fulfillments.length > 0 ||
@@ -184,6 +189,30 @@ function getStage(order) {
 
   if (isReadyToShip(order)) return 2;
   return 1;
+}
+
+// Har item (line item) ka alag stage: 1 Confirmed, 3 Shipped, 4 Delivered.
+// Item jis shipment (fulfillment) mein gaya, usi ka status dekha jata hai.
+function getLineStages(order) {
+  const tags = lowerTags(order);
+  const orderDelivered = DELIVERED_TAGS.some((t) => tags.includes(t));
+  const orderShipped = SHIPPED_TAGS.some((t) => tags.includes(t));
+  const fulfillments = successfulFulfillments(order);
+
+  return (order.lineItems?.nodes || []).map((li) => {
+    const mine = fulfillments.filter((f) =>
+      (f.fulfillmentLineItems?.nodes || []).some((fli) => fli.lineItem?.id === li.id),
+    );
+
+    let stage = 1;
+    if (orderDelivered || (mine.length > 0 && mine.every((f) => f.displayStatus === "DELIVERED"))) {
+      stage = 4;
+    } else if (orderShipped || mine.length > 0) {
+      stage = 3;
+    }
+
+    return { lineItemId: li.id, variantId: li.variant?.id || null, stage };
+  });
 }
 
 // Order dekh kar decide karo: cancel ho sakta hai ya nahi
@@ -238,9 +267,11 @@ export const loader = async ({ request }) => {
 
     // Tracker stage sirf usi customer ko dikhe jiska order hai
     const ownsOrder = Boolean(order && sessionToken.sub && order.customer?.id === sessionToken.sub);
-    const stage = ownsOrder && !order.cancelledAt ? getStage(order) : 0;
+    const showTracking = ownsOrder && !order.cancelledAt;
+    const stage = showTracking ? getStage(order) : 0;
+    const lines = showTracking ? getLineStages(order) : [];
 
-    return cors(Response.json({ ...result, stage }));
+    return cors(Response.json({ ...result, stage, lines }));
   } catch (error) {
     console.error("[order-cancel] status error", error);
     return cors(
@@ -252,7 +283,7 @@ export const loader = async ({ request }) => {
   }
 };
 
-// POST /api/order-cancel  body: { orderId, reason, details }  -> order cancel
+// POST /api/order-cancel  body: { orderId, reason }  -> order cancel
 export const action = async ({ request }) => {
   const { sessionToken, cors } = await authenticate.public.customerAccount(request);
 
@@ -273,7 +304,7 @@ export const action = async ({ request }) => {
 
     // 1) Cancel se pehle reason ka tag lagao (Unicommerce / admin ke liye)
     const reasonText = String(body.reason || "Not given").replace(/,/g, " ").trim();
-    // "Other" chunne par customer ka likha reason (tag mein nahi, staff note mein jayega)
+    // "Other" chunne par customer ka likha reason
     const details = String(body.details || "").replace(/\s+/g, " ").trim().slice(0, 150);
 
     if (reasonText === "Other" && !details) {
@@ -281,7 +312,7 @@ export const action = async ({ request }) => {
         Response.json({ state: "ERROR", message: "Please tell us why you want to cancel." }, { status: 400 }),
       );
     }
-        // "Other" chuna ho to tag mein customer ka likha text, warna dropdown wala reason
+    // "Other" chuna ho to tag mein customer ka likha text, warna dropdown wala reason
     const tagReason = reasonText === "Other" && details ? details.replace(/,/g, " ") : reasonText;
     const cancelTags = ["customer-cancelled", `Cancel: ${tagReason}`.slice(0, 40)];
 

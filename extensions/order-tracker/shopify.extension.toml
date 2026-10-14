@@ -19,6 +19,12 @@ uid = "6f5c3833-c5bc-a117-3b2b-f929d2eaa95477479b32"
 target = "customer-account.order-status.block.render"
 module = "./src/OrderTracker.jsx"
 
+
+[[extensions.targeting]]
+target = "customer-account.order-status.cart-line-item.render-after"
+module = "./src/OrderItemTracker.jsx"
+
+
 [extensions.capabilities]
 # Gives your extension access to directly query Shopify’s storefront API.
 # https://shopify.dev/docs/apps/build/customer-accounts/capabilities#storefront-api-access
