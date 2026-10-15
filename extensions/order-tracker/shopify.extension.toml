@@ -15,14 +15,20 @@ uid = "6f5c3833-c5bc-a117-3b2b-f929d2eaa95477479b32"
 # and the file that contains your extension’s source code. Learn more:
 # https://shopify.dev/docs/api/customer-account-ui-extensions/latest/targets
 
+# Header wala tracker (editor se hata dein)
 [[extensions.targeting]]
 target = "customer-account.order-status.block.render"
 module = "./src/OrderTracker.jsx"
 
-# Har item ke neeche wala tracker
+# Ship ho chuke har shipment card ke andar
 [[extensions.targeting]]
-target = "customer-account.order-status.cart-line-item.render-after"
-module = "./src/OrderItemTracker.jsx"
+target = "customer-account.order-status.fulfillment-details.render-after"
+module = "./src/ShipmentTracker.jsx"
+
+# Abhi ship na hue items ke card mein
+[[extensions.targeting]]
+target = "customer-account.order-status.unfulfilled-items.render-after"
+module = "./src/PendingTracker.jsx"
 
 
 [extensions.capabilities]

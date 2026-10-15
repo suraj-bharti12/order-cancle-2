@@ -215,6 +215,16 @@ function getLineStages(order) {
   });
 }
 
+// Har shipment (fulfillment) ka alag stage: 3 Shipped, 4 Delivered.
+// Alag warehouse / alag courier = alag fulfillment = alag tracker.
+function getFulfillmentStages(order) {
+  const orderDelivered = DELIVERED_TAGS.some((t) => lowerTags(order).includes(t));
+  return successfulFulfillments(order).map((f) => ({
+    fulfillmentId: f.id,
+    stage: orderDelivered || f.displayStatus === "DELIVERED" ? 4 : 3,
+  }));
+}
+
 // Order dekh kar decide karo: cancel ho sakta hai ya nahi
 function checkOrder(order, customerId) {
   // Order isi logged-in customer ka hona chahiye
@@ -270,8 +280,9 @@ export const loader = async ({ request }) => {
     const showTracking = ownsOrder && !order.cancelledAt;
     const stage = showTracking ? getStage(order) : 0;
     const lines = showTracking ? getLineStages(order) : [];
+    const fulfillments = showTracking ? getFulfillmentStages(order) : [];
 
-    return cors(Response.json({ ...result, stage, lines }));
+    return cors(Response.json({ ...result, stage, lines, fulfillments }));
   } catch (error) {
     console.error("[order-cancel] status error", error);
     return cors(
