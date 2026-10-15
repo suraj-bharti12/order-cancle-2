@@ -57,14 +57,25 @@ const ORDER_QUERY = `#graphql
       displayFinancialStatus
       displayFulfillmentStatus
       customer { id }
-      lineItems(first: 50) { nodes { id isGiftCard variant { id } } }
-      fulfillments(first: 10) {
+      lineItems(first: 30) { nodes { id isGiftCard } }
+      fulfillments(first: 8) {
         id
         status
         displayStatus
-        fulfillmentLineItems(first: 50) { nodes { lineItem { id } } }
+        createdAt
+        location { name }
+        trackingInfo(first: 1) { company number url }
+        fulfillmentLineItems(first: 20) { nodes { quantity lineItem { title } } }
       }
-      fulfillmentOrders(first: 20) { nodes { id status requestStatus } }
+      fulfillmentOrders(first: 8) {
+        nodes {
+          id
+          status
+          requestStatus
+          assignedLocation { name }
+          lineItems(first: 20) { nodes { remainingQuantity lineItem { title } } }
+        }
+      }
     }
   }
 `;
@@ -191,38 +202,70 @@ function getStage(order) {
   return 1;
 }
 
-// Har item (line item) ka alag stage: 1 Confirmed, 3 Shipped, 4 Delivered.
-// Item jis shipment (fulfillment) mein gaya, usi ka status dekha jata hai.
-function getLineStages(order) {
+// ============================================================
+// SHIPMENT-WISE TRACKER
+// Alag warehouse / alag courier = alag shipment = alag tracker.
+// stage: 1 Confirmed, 3 Shipped, 4 Delivered
+// ============================================================
+const itemsText = (list) =>
+  list
+    .filter((i) => i.quantity > 0)
+    .map((i) => `${i.title} × ${i.quantity}`)
+    .join(", ");
+
+function getShipments(order) {
   const tags = lowerTags(order);
   const orderDelivered = DELIVERED_TAGS.some((t) => tags.includes(t));
   const orderShipped = SHIPPED_TAGS.some((t) => tags.includes(t));
-  const fulfillments = successfulFulfillments(order);
 
-  return (order.lineItems?.nodes || []).map((li) => {
-    const mine = fulfillments.filter((f) =>
-      (f.fulfillmentLineItems?.nodes || []).some((fli) => fli.lineItem?.id === li.id),
-    );
+  // 1) Jo ship ho chuke hain (har fulfillment = ek shipment)
+  const shipped = successfulFulfillments(order)
+    .slice()
+    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
+    .map((f) => {
+      const tracking = (f.trackingInfo || [])[0] || {};
+      return {
+        id: f.id,
+        stage: orderDelivered || f.displayStatus === "DELIVERED" ? 4 : 3,
+        warehouse: f.location?.name || "",
+        courier: tracking.company || "",
+        trackingNumber: tracking.number || "",
+        trackingUrl: tracking.url || "",
+        items: itemsText(
+          (f.fulfillmentLineItems?.nodes || []).map((n) => ({
+            title: n.lineItem?.title || "Item",
+            quantity: n.quantity || 0,
+          })),
+        ),
+      };
+    });
 
-    let stage = 1;
-    if (orderDelivered || (mine.length > 0 && mine.every((f) => f.displayStatus === "DELIVERED"))) {
-      stage = 4;
-    } else if (orderShipped || mine.length > 0) {
-      stage = 3;
-    }
+  // 2) Jo abhi ship nahi hue - warehouse ke hisaab se group
+  const pendingByWarehouse = new Map();
+  for (const fo of order.fulfillmentOrders?.nodes || []) {
+    if (fo.status === "CLOSED" || fo.status === "CANCELLED") continue;
+    const warehouse = fo.assignedLocation?.name || "";
+    const list = (fo.lineItems?.nodes || [])
+      .filter((n) => n.remainingQuantity > 0)
+      .map((n) => ({ title: n.lineItem?.title || "Item", quantity: n.remainingQuantity }));
+    if (!list.length) continue;
 
-    return { lineItemId: li.id, variantId: li.variant?.id || null, stage };
-  });
-}
+    const group = pendingByWarehouse.get(warehouse) || { id: fo.id, warehouse, list: [] };
+    group.list.push(...list);
+    pendingByWarehouse.set(warehouse, group);
+  }
 
-// Har shipment (fulfillment) ka alag stage: 3 Shipped, 4 Delivered.
-// Alag warehouse / alag courier = alag fulfillment = alag tracker.
-function getFulfillmentStages(order) {
-  const orderDelivered = DELIVERED_TAGS.some((t) => lowerTags(order).includes(t));
-  return successfulFulfillments(order).map((f) => ({
-    fulfillmentId: f.id,
-    stage: orderDelivered || f.displayStatus === "DELIVERED" ? 4 : 3,
+  const pending = [...pendingByWarehouse.values()].map((g) => ({
+    id: g.id,
+    stage: orderDelivered ? 4 : orderShipped ? 3 : 1,
+    warehouse: g.warehouse,
+    courier: "",
+    trackingNumber: "",
+    trackingUrl: "",
+    items: itemsText(g.list),
   }));
+
+  return [...shipped, ...pending];
 }
 
 // Order dekh kar decide karo: cancel ho sakta hai ya nahi
@@ -267,7 +310,7 @@ async function loadOrder(sessionToken, orderId) {
   return { admin, order, result: checkOrder(order, sessionToken.sub) };
 }
 
-// GET /api/order-cancel?orderId=...  -> button status + tracker stages
+// GET /api/order-cancel?orderId=...  -> button enable/disable + tracker data
 export const loader = async ({ request }) => {
   const { sessionToken, cors } = await authenticate.public.customerAccount(request);
   const orderId = new URL(request.url).searchParams.get("orderId");
@@ -275,14 +318,13 @@ export const loader = async ({ request }) => {
   try {
     const { order, result } = await loadOrder(sessionToken, orderId);
 
-    // Tracker stage sirf usi customer ko dikhe jiska order hai
+    // Tracker sirf usi customer ko dikhe jiska order hai
     const ownsOrder = Boolean(order && sessionToken.sub && order.customer?.id === sessionToken.sub);
     const showTracking = ownsOrder && !order.cancelledAt;
     const stage = showTracking ? getStage(order) : 0;
-    const lines = showTracking ? getLineStages(order) : [];
-    const fulfillments = showTracking ? getFulfillmentStages(order) : [];
+    const shipments = showTracking ? getShipments(order) : [];
 
-    return cors(Response.json({ ...result, stage, lines, fulfillments }));
+    return cors(Response.json({ ...result, stage, shipments }));
   } catch (error) {
     console.error("[order-cancel] status error", error);
     return cors(
@@ -315,7 +357,6 @@ export const action = async ({ request }) => {
 
     // 1) Cancel se pehle reason ka tag lagao (Unicommerce / admin ke liye)
     const reasonText = String(body.reason || "Not given").replace(/,/g, " ").trim();
-    // "Other" chunne par customer ka likha reason
     const details = String(body.details || "").replace(/\s+/g, " ").trim().slice(0, 150);
 
     if (reasonText === "Other" && !details) {

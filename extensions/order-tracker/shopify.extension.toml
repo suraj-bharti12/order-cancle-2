@@ -1,8 +1,3 @@
-# Learn more about configuring your Customer account UI extension:
-# https://shopify.dev/docs/api/customer-account-ui-extensions/latest#configuration
-
-# The version of APIs your extension will receive. Learn more:
-# https://shopify.dev/docs/api/usage/versioning
 api_version = "2026-07"
 
 [[extensions]]
@@ -11,36 +6,10 @@ handle = "order-tracker"
 type = "ui_extension"
 uid = "6f5c3833-c5bc-a117-3b2b-f929d2eaa95477479b32"
 
-# Controls where in Shopify your extension will be injected,
-# and the file that contains your extension’s source code. Learn more:
-# https://shopify.dev/docs/api/customer-account-ui-extensions/latest/targets
-
-# Header wala tracker (editor se hata dein)
-[[extensions.targeting]]
-target = "customer-account.order-status.block.render"
-module = "./src/OrderTracker.jsx"
-
-# Ship ho chuke har shipment card ke andar
-[[extensions.targeting]]
-target = "customer-account.order-status.fulfillment-details.render-after"
-module = "./src/ShipmentTracker.jsx"
-
-# Abhi ship na hue items ke card mein
-[[extensions.targeting]]
-target = "customer-account.order-status.unfulfilled-items.render-after"
-module = "./src/PendingTracker.jsx"
-
-
 [extensions.capabilities]
-# Gives your extension access to directly query Shopify’s storefront API.
-# https://shopify.dev/docs/apps/build/customer-accounts/capabilities#storefront-api-access
 api_access = true
+network_access = true
 
-# Gives your extension access to make external network calls, using the
-# JavaScript `fetch()` API. Learn more:
-# https://shopify.dev/docs/apps/build/customer-accounts/capabilities#network-access
- network_access = true
-
-
-
- 
+[[extensions.targeting]]
+module = "./src/OrderTracker.jsx"
+target = "customer-account.order-status.block.render"
