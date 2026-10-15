@@ -19,7 +19,7 @@ uid = "6f5c3833-c5bc-a117-3b2b-f929d2eaa95477479b32"
 target = "customer-account.order-status.block.render"
 module = "./src/OrderTracker.jsx"
 
-
+# Har item ke neeche wala tracker
 [[extensions.targeting]]
 target = "customer-account.order-status.cart-line-item.render-after"
 module = "./src/OrderItemTracker.jsx"

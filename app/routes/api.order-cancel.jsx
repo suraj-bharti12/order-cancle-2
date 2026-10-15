@@ -257,7 +257,7 @@ async function loadOrder(sessionToken, orderId) {
   return { admin, order, result: checkOrder(order, sessionToken.sub) };
 }
 
-// GET /api/order-cancel?orderId=...  -> button enable/disable ke liye status
+// GET /api/order-cancel?orderId=...  -> button status + tracker stages
 export const loader = async ({ request }) => {
   const { sessionToken, cors } = await authenticate.public.customerAccount(request);
   const orderId = new URL(request.url).searchParams.get("orderId");
@@ -283,7 +283,7 @@ export const loader = async ({ request }) => {
   }
 };
 
-// POST /api/order-cancel  body: { orderId, reason }  -> order cancel
+// POST /api/order-cancel  body: { orderId, reason, details }  -> order cancel
 export const action = async ({ request }) => {
   const { sessionToken, cors } = await authenticate.public.customerAccount(request);
 
