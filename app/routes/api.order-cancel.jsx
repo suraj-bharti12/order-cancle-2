@@ -63,7 +63,7 @@ const ORDER_QUERY = `#graphql
         status
         displayStatus
         createdAt
-        location { name }
+        fulfillmentOrders(first: 1) { nodes { assignedLocation { name } } }
         trackingInfo(first: 1) { company number url }
         fulfillmentLineItems(first: 20) { nodes { quantity lineItem { title } } }
       }
@@ -227,7 +227,7 @@ function getShipments(order) {
       return {
         id: f.id,
         stage: orderDelivered || f.displayStatus === "DELIVERED" ? 4 : 3,
-        warehouse: f.location?.name || "",
+        warehouse: f.fulfillmentOrders?.nodes?.[0]?.assignedLocation?.name || "",
         courier: tracking.company || "",
         trackingNumber: tracking.number || "",
         trackingUrl: tracking.url || "",
