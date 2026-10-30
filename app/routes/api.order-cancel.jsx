@@ -269,9 +269,10 @@ function getShipments(order) {
 }
 
 // Order dekh kar decide karo: cancel ho sakta hai ya nahi
-function checkOrder(order, customerId) {
+// isOwner = true/false (order isi logged-in customer ka hai ya nahi)
+function checkOrder(order, isOwner) {
   // Order isi logged-in customer ka hona chahiye
-  if (!order || !customerId || order.customer?.id !== customerId) {
+  if (!order || isOwner !== true) {
     return { cancellable: false, state: "NOT_ALLOWED", message: "Order not found." };
   }
   if (order.cancelledAt) {
@@ -293,34 +294,45 @@ function checkOrder(order, customerId) {
   return { cancellable: true, state: "OPEN", message: "" };
 }
 
-// Shopify se order laao aur check karo
-async function loadOrder(sessionToken, orderId) {
-  if (typeof orderId !== "string" || !/^gid:\/\/shopify\/Order\/\d+$/.test(orderId)) {
-    return { result: { cancellable: false, state: "NOT_ALLOWED", message: "Invalid order." } };
-  }
+const isValidOrderId = (orderId) =>
+  typeof orderId === "string" && /^gid:\/\/shopify\/Order\/\d+$/.test(orderId);
 
-  const shop = String(sessionToken.dest || "").replace(/^https?:\/\//, "");
-  const { admin } = await unauthenticated.admin(shop);
+// Session token se shop ka domain (jaise fabindia2.myshopify.com)
+const shopFromToken = (sessionToken) => String(sessionToken.dest || "").replace(/^https?:\/\//, "");
 
+// Shopify se order laao
+async function loadOrder(admin, orderId) {
   const res = await admin.graphql(ORDER_QUERY, { variables: { id: orderId } });
   const { data } = await res.json();
-  const order = data?.order ?? null;
-
-  // sessionToken.sub = logged-in customer ki ID
-  return { admin, order, result: checkOrder(order, sessionToken.sub) };
+  return data?.order ?? null;
 }
+
+// Order isi logged-in customer ka hai? Sirf true/false nikalta hai,
+// session token ka koi hissa aage response tak nahi jata.
+function isOrderOwner(order, sessionToken) {
+  return Boolean(order && sessionToken.sub && order.customer?.id === sessionToken.sub);
+}
+
+const INVALID_ORDER = { cancellable: false, state: "NOT_ALLOWED", message: "Invalid order." };
 
 // GET /api/order-cancel?orderId=...  -> button enable/disable + tracker data
 export const loader = async ({ request }) => {
   const { sessionToken, cors } = await authenticate.public.customerAccount(request);
   const orderId = new URL(request.url).searchParams.get("orderId");
 
+  if (!isValidOrderId(orderId)) {
+    return cors(Response.json({ ...INVALID_ORDER, stage: 0, shipments: [] }));
+  }
+
   try {
-    const { order, result } = await loadOrder(sessionToken, orderId);
+    // Admin API client sirf server par rehta hai, kabhi response mein nahi jata
+    const { admin } = await unauthenticated.admin(shopFromToken(sessionToken));
+    const order = await loadOrder(admin, orderId);
+    const isOwner = isOrderOwner(order, sessionToken);
+    const result = checkOrder(order, isOwner);
 
     // Tracker sirf usi customer ko dikhe jiska order hai
-    const ownsOrder = Boolean(order && sessionToken.sub && order.customer?.id === sessionToken.sub);
-    const showTracking = ownsOrder && !order.cancelledAt;
+    const showTracking = isOwner && !order.cancelledAt;
     const stage = showTracking ? getStage(order) : 0;
     const shipments = showTracking ? getShipments(order) : [];
 
@@ -347,9 +359,16 @@ export const action = async ({ request }) => {
     return cors(Response.json({ state: "ERROR", message: "Invalid request." }, { status: 400 }));
   }
 
+  if (!isValidOrderId(body?.orderId)) {
+    return cors(Response.json(INVALID_ORDER, { status: 403 }));
+  }
+
   try {
     // Cancel se pehle server par dobara check
-    const { admin, order, result } = await loadOrder(sessionToken, body.orderId);
+    // Admin API client sirf server par rehta hai, kabhi response mein nahi jata
+    const { admin } = await unauthenticated.admin(shopFromToken(sessionToken));
+    const order = await loadOrder(admin, body.orderId);
+    const result = checkOrder(order, isOrderOwner(order, sessionToken));
     if (!result.cancellable) {
       const status = result.state === "READY_TO_SHIP" ? 409 : 403;
       return cors(Response.json(result, { status }));
